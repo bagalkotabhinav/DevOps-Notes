@@ -59,6 +59,8 @@ docker compose -f filename.yaml stop
 docker compose stop
 docker compose -f filename.yaml start
 docker compose start
+docker compose start <service_name>
+docker compose stop <service_name>
 docker compose exec <service_name> <command>
 docker compose restart <service_name>
 docker compose logs <service_name>
