@@ -1,0 +1,134 @@
+<name> and <id> can be used interchangeably in most commands
+
+docker pull image_name
+docker pull image_name:version
+docker images
+docker ps
+docker ps -a
+
+#From image name/id (For spinning up new container from an image)
+docker run <image_name>
+docker run <image_id>
+docker run -it <image_name>
+docker run -it <image_id>
+docker run -d -e MYSQL_ROOT_PASSWORD=secret --name my_database mysql:8.0
+docker run -it --rm ubuntu
+
+#For starting/stopping existing container
+docker start <container_id>
+docker start <container_name>
+docker stop <container_id>
+docker stop <container_name>
+
+docker rm <container_name>
+docker rm <container_id>
+
+docker rmi <image_name>
+docker rmi <image_id>
+
+#Port Binding
+docker run -p 8080:3306 <image-name>
+docker run -d -e MYSQL_ROOT_PASSWORD=secret --name my_database --network testnetwork -p 8080:3306 mysql
+docker run <anyorderofflags> <image_name>
+
+#Troubleshooting
+docker logs <container_name>
+docker logs <container_id>
+#Getting inside a container
+docker exec -it <container_id> mysql -u root -p
+docker exec -it <container_name> mysql -u root -p
+docker restart <container_name>
+
+#Network
+docker network ls
+docker network create <network_name>
+docker network rm <network_name>
+docker network rm <network_id>
+docker network connect <network_name> <container_name>
+docker network inspect <network_name>
+docker network prune
+
+#Docker Compose
+docker compose -f filename.yaml up -d
+docker compose up
+docker compose -f filename.yaml ps
+docker compose ps
+docker compose -f filename.yaml down
+docker compose down
+docker compose -f filename.yaml stop
+docker compose stop
+docker compose -f filename.yaml start
+docker compose start
+docker compose exec <service_name> <command>
+docker compose restart <service_name>
+docker compose logs <service_name>
+docker compose commands uses service names and not container names
+
+docker-compose.yaml structure:
+services:
+  container1_name:
+    image: <image_name>
+    environment:
+      env1: <val1>
+      env2: <val2>
+    ports:
+    - <port1>:<prt2>
+    networks:
+    - <network_name>
+    volumes:
+      - <volume_name>:<container_directory>
+      - <host_directory>:<container_directory>
+  container2_name:
+    image: <image_name>
+    environment:
+      env1: <val1>
+      env2: <val2>
+    ports:
+    - <port1>:<prt2>
+    networks:
+    - <network_name>
+  container3_name:
+    image: <image_name>
+    environment:
+      env1: <val1>
+      env2: <val2>
+    ports:
+    - <port1>:<p0rt2>
+    networks:
+    - <network_name>
+networks:
+  <network_name>:
+    name: <network_name>
+volumes:
+  <volume_name>:
+    name: <volume_name>
+
+#Build Docker Image
+docker build -t my-image:1.0 .
+docker commit <container_name> <image_name>
+
+#Push Images to Docker Hub
+docker tag <image_name> <repo_name>:<image_name_in_repo>
+docker tag fcms-backend:1.1 abhinavbagalkot/faculty-competence:backend-1.1
+docker push <repo_name>:<image_name_in_repo>
+docker push abhinavbagalkot/faculty-competence:backend-1.1
+
+#Docker Volumes
+docker run -it -v <host_path>:<container_path> --name <container_name> <image_name>
+docker run -it -v /home/abhinav-bagalkot/data:/test/data --name myos ubuntu
+#Named Volumes
+docker volume create <volume_name>
+docker run -it -v <volume_name>:<path_in_container> --name <name> <image_name>
+docker volume ls
+docker volume prune
+
+#Flags:
+-a : All
+-it : Interactive mode
+-d : Detatched mode
+-e : To mention environment variables
+-p : To bind port from local:container
+-v : To attach volumes
+--name : To name your container
+-f : To mention filename in docker compose
+-t : Tag, naming the image
