@@ -1,0 +1,27 @@
+kubectl version
+kubectl api-resources
+kubectl get ns
+kubectl get pods
+kubectl get pods -n <namespace>
+kubectl get pods -A
+kubectl get pods -w
+kubectl get pod -o wide
+kubectl get nodes
+kubectl get services
+kubectl get services -n <namespace>
+kubectl get services -A
+kubectl create deployment <name> --image=<image_name>
+kubectl create deployment nginx-depl --image=nginx
+kubectl get deployment
+kubectl get deployment nginx-depl -o yaml
+kubectl get replicaset
+kubectl edit deployment <name_of_deployment>
+kubectl logs <pod_name>
+kubectl delete deployment <deployment_name>
+kubectl exec -it <pod_name> --<command>
+kubectl exec -it <pod_name> --bin/bash
+kubectl describe pod <pod_name>
+kubectl apply -f filename.yaml
+kubectl api-resources
+kubectl get deployment nginx-depl -o yaml
+kubectl delete -f filename.yaml

@@ -62,6 +62,7 @@ docker compose start
 docker compose start <service_name>
 docker compose stop <service_name>
 docker compose exec <service_name> <command>
+docker compose exec -it fcms-backend sh
 docker compose restart <service_name>
 docker compose logs <service_name>
 docker compose commands uses service names and not container names
@@ -134,3 +135,4 @@ docker volume prune
 --name : To name your container
 -f : To mention filename in docker compose
 -t : Tag, naming the image
+--network : To specify the network of the container
