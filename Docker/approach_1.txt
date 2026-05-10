@@ -1,0 +1,14 @@
+Prerequisites:
+1. Create frontend and backend image
+2. Update .env in api folder with the env variables of the container db for seeding
+
+Steps:
+1. Create a db container:
+docker run -d --name fcms-db -e MYSQL_ROOT_PASSWORD=abhi1502 -e MYSQL_DATABASE=faculty_db -p 6060:3306 mysql:latest
+2. Seed data:
+cd api
+node seed/seed_mysql.js
+3. Create a backend container
+docker run -d --name fcms-backend -p5000:5000 -e DB_USER=root -e DB_PASS=abhi1502 -e DB_NAME=faculty_db -e DB_HOST=host.docker.internal -e DB_PORT=6060 -e DB_DIALECT=mysql -e JWT_SECRET=<secret> fcms-backend:1.1
+4. Create a frontend container
+docker run -d --name fcms-frontend -p 3000:3000 fcms-frontend:1.1

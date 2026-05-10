@@ -1,3 +1,4 @@
+minikube start
 kubectl version
 kubectl api-resources
 kubectl get ns
@@ -25,3 +26,4 @@ kubectl apply -f filename.yaml
 kubectl api-resources
 kubectl get deployment nginx-depl -o yaml
 kubectl delete -f filename.yaml
+kubectl exec -it deployment/fcms-frontend -n fcms -- sh

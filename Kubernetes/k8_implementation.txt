@@ -1,0 +1,310 @@
+# FCMS Kubernetes Deployment — Complete Summary
+
+## Starting Point
+
+The starting point was a working Dockerized FCMS app (React + Express + MySQL) running on Docker Compose. The goal: deploy the same app on Kubernetes, written from scratch, with the same setup working across local dev, Docker, Minikube, and AWS EKS.
+
+---
+
+## Conceptual Foundation
+
+### Kubernetes Architecture
+- **Cluster** = entire K8s environment (control plane + worker nodes)
+- **Control plane components**: API Server (entry point), etcd (state store), Scheduler (Pod placement), Controller Manager (reconciliation loops)
+- **Worker node components**: kubelet (agent), kube-proxy (networking), container runtime
+- **The reconciliation principle**: desired state is declared in YAML, K8s constantly works to match actual state to the declaration. Self-healing, automatic.
+
+### The 11 Resources
+
+| Resource | Purpose |
+|---|---|
+| **Namespace** | Logical folder grouping all FCMS resources (`fcms`) |
+| **ConfigMap** | Non-sensitive env vars (DB_HOST, DB_PORT, DB_NAME, DB_DIALECT) |
+| **Secret** | Sensitive env vars (DB_USER, DB_PASS, JWT_SECRET) |
+| **PVC** | Persistent storage request (1Gi for MySQL data) |
+| **Deployment** | Manages Pods — runs containers, handles replicas, rolling updates |
+| **Service** | Stable DNS name + load balancing for Pods (ClusterIP for internal) |
+| **Ingress** | Single external entry point with path-based routing |
+
+### The Hierarchy
+```
+Cluster
+└── Namespace (fcms)
+    └── Deployment → ReplicaSet → Pod → Container
+        ├── ConfigMap/Secret → injected as env vars
+        └── PVC → mounted as volume
+    └── Service (routes to Pods via labels)
+    └── Ingress (routes external traffic to Services)
+```
+
+---
+
+## Pre-K8s Refactoring (Critical Foundation)
+
+Before writing manifests, the app needs to be made environment-portable.
+
+### Problem Identified
+React code with `apiBaseUrl: 'http://localhost:5000/api'` works in Docker because the developer and the user are the same person on the same laptop. But in K8s/production, the user is somewhere else — `localhost:5000` from their browser means their own laptop, which has nothing.
+
+### Solution Implemented
+1. **Change `apiBaseUrl` to `/api`** — relative path, environment-agnostic
+2. **Add `proxy: http://localhost:5000`** to `package.json` — keeps `npm start` working locally
+3. **Create `client/nginx.conf`** with reverse proxy:
+   ```nginx
+   location /api/ {
+     proxy_pass http://fcms-backend:5000/api/;
+   }
+   location / {
+     try_files $uri $uri/ /index.html;
+   }
+   ```
+4. **Refactor frontend Dockerfile to multi-stage**:
+   - Stage 1: Node builds React → static files
+   - Stage 2: nginx serves those files + proxies `/api`
+5. **Update `docker-compose.yaml`** port mapping `3000:80` (browser hits 3000, nginx serves on 80)
+6. **Add `.dockerignore`** to prevent `.env` from being baked into images
+
+### Result
+- Frontend image: 175MB → 26MB (85% reduction)
+- Same code works in: `npm start`, Docker Compose, Minikube, EKS
+- The hostname `fcms-backend` works as DNS in both Docker and K8s networks (the magic glue)
+
+### Secrets Cleanup
+- `.env` lives at project root (not inside `./api`)
+- `${VAR}` substitution in compose pulls from root `.env`
+- `.dockerignore` prevents `.env` baking into images
+
+---
+
+## The 11 K8s Manifests
+
+### 1. `namespace.yaml`
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fcms
+```
+
+### 2. `configmap.yaml`
+Non-sensitive env vars. Uses `data:` not `spec:`. Critical: `DB_HOST: fcms-db` must match the MySQL Service name.
+
+### 3. `secret.yaml`
+Use `stringData` (auto base64-encodes) instead of `data` (manual base64). Important: base64 ≠ encryption — real secrecy comes from K8s infrastructure (RBAC, etcd encryption, tmpfs mounts). Production uses SOPS or AWS Secrets Manager.
+
+### 4. `mysql-pvc.yaml`
+Storage request. Dynamic provisioning is preferred (no manual PV needed). Note: 0.1Gi doesn't work — use 1Gi or 100Mi. PV vs PVC = apartment vs application form.
+
+### 5. `mysql-deployment.yaml`
+- `strategy: Recreate` (DBs can't have rolling updates)
+- `valueFrom.secretKeyRef` and `valueFrom.configMapKeyRef` for individual env vars (because MySQL image expects specific names: `MYSQL_ROOT_PASSWORD`, `MYSQL_DATABASE`)
+- `volumes` (Pod level) + `volumeMounts` (container level) — two-step pattern
+- Replicas: 1 (never scale a single MySQL with shared PVC)
+
+### 6. `mysql-service.yaml`
+- ClusterIP (internal only)
+- Name: `fcms-db` (matches `DB_HOST` in ConfigMap)
+- Selector matches Pod label `app: fcms-db`
+
+### 7. `backend-deployment.yaml`
+- `envFrom` (not `valueFrom`) injects ALL keys from ConfigMap and Secret in one shot
+- Replicas: 2 (stateless, scales horizontally)
+- Image from Docker Hub: `abhinavbagalkot/faculty-competence:fcms-backend-2.0`
+
+### 8. `backend-service.yaml`
+- ClusterIP
+- Name: `fcms-backend` (matches `proxy_pass` in nginx.conf)
+- Port 5000
+
+### 9. `frontend-deployment.yaml`
+- Replicas: 2
+- NO env vars (frontend is static, doesn't need ConfigMap/Secret — security best practice)
+- Container port 80 (nginx)
+
+### 10. `frontend-service.yaml`
+- ClusterIP, port 80
+- Name: `fcms-frontend`
+
+### 11. `ingress.yaml`
+- `ingressClassName: nginx`
+- Path-based routing: `/api` → backend, `/` → frontend
+- Requires `minikube addons enable ingress` first
+
+---
+
+## Critical Concepts
+
+### Naming and Wiring (The 3 Wires)
+
+**Wire 1**: Pod label = Deployment selector = Service selector
+```
+template.metadata.labels.app === selector.matchLabels.app === Service.spec.selector.app
+```
+Same label in 3 places. Without matching, Deployment can't find Pods, Service has nothing to route to.
+
+**Wire 2**: Service name = DNS hostname referenced elsewhere
+- `Service.metadata.name: fcms-db` ↔ `ConfigMap.data.DB_HOST: fcms-db`
+- `Service.metadata.name: fcms-backend` ↔ `nginx.conf proxy_pass http://fcms-backend:5000`
+
+**Wire 3**: Ingress backend reference = Service name
+
+### Port Concepts
+- `containerPort` (Deployment) = documentation only, what the app inside listens on
+- `port` (Service) = what other Pods/Services use to call this Service
+- `targetPort` (Service) = where to forward inside the container
+- `nodePort` (NodePort Service only) = external port on every node
+
+### Service Types
+- **ClusterIP** (default) — internal only. Used for all 3 services in this setup
+- **NodePort** — exposes on every node's IP via high port. Dev only
+- **LoadBalancer** — provisions cloud LB. Used in production for direct external access (or one Ingress with ALB)
+
+### Why Ingress Wins Over Alternatives
+- Single entry point vs multiple NodePorts/LoadBalancers
+- Path-based routing (`/api` vs `/`)
+- Frontend code stays clean with relative URLs
+- Cheaper in cloud (one ALB vs many)
+- Backend stays internal (security)
+
+---
+
+## Common Issues to Debug
+
+### 1. Image Pull Issues
+- Local images (`faculty-competence-fcms-frontend:latest`) aren't on Docker Hub
+- Solution: tag and push to `abhinavbagalkot/faculty-competence:fcms-frontend-2.0`
+- K8s pulls from Docker Hub by default
+
+### 2. Naming Conflicts in Manifests
+- Naming a ConfigMap `fcms` (same as namespace) causes confusion
+- Better: use descriptive names like `fcms-config`
+
+### 3. MySQL Won't Start Without Password
+- Standalone Pod creation fails without `MYSQL_ROOT_PASSWORD` env var
+- Realization: every container needs proper env vars. CLI `kubectl create deployment` doesn't support env injection
+- Solution: full Deployment YAML with `valueFrom.secretKeyRef`
+
+### 4. Backend Crashloop with Sequelize Dialect Error
+- Express crashes when `DB_DIALECT` env var is missing
+- Realization: ConfigMap+Secret are the K8s replacement for `.env`. Without them injected via `envFrom`, the app has no config
+- The chain: `.env → docker-compose.environment → K8s ConfigMap+Secret → Pod env vars → process.env in code`
+
+### 5. PVC Storage Size Issue
+- `storage: 0.1Gi` is invalid
+- Fix: `1Gi`
+
+### 6. Port Mapping Confusion
+- `targetPort` doesn't belong in Deployment
+- `targetPort` only belongs in Service
+- Deployment has `containerPort` (documentation)
+
+### 7. `kubectl edit` Opens Vim by Default
+- Solution: `export KUBE_EDITOR="nano"` permanently in `~/.bashrc`
+
+### 8. Background Jobs Pile-up
+- `Ctrl+Z` stops processes without killing them, stacking stopped processes
+- Solution: always use `Ctrl+C` to terminate, `kill %N` to clean up stragglers
+
+### 9. dpkg Lock File Issues
+- Background `apt upgrade` blocks Minikube install
+- Solution: kill the process, remove `/var/lib/dpkg/lock-frontend` and `/var/lib/dpkg/lock`
+
+### 10. Service Name vs Deployment Name Confusion
+- `kubectl delete deployment <pod-name>` fails because pod name has hash suffix
+- Lesson: Deployment name ≠ Pod name. Pod name = `<deployment-name>-<replicaset-hash>-<random>`
+
+---
+
+## Access Patterns
+
+### How to Reach the App from Browser
+
+| Method | Setup | Access |
+|---|---|---|
+| `/etc/hosts` mapping | `echo "127.0.0.1 fcms.local" \| sudo tee -a /etc/hosts` | `http://fcms.local` |
+| `minikube tunnel` (required) | Run in separate terminal | `http://localhost` or `http://fcms.local` |
+| `kubectl port-forward` | `kubectl port-forward -n fcms svc/fcms-frontend 8080:80` | `http://localhost:8080` (bypasses Ingress) |
+
+### Why `minikube tunnel` is Needed
+- Minikube on Docker driver runs cluster inside a Docker container
+- Cluster has its own internal network (`192.168.49.0/24`)
+- Tunnel creates a route from the laptop into that network
+- Without tunnel, the cluster IP (`192.168.49.2`) is unreachable from browser
+
+### Browser Cache Behavior
+- Once React app loads, browser caches HTML/JS/CSS
+- Stopping tunnel doesn't kill what's already loaded in a tab
+- Page appears to "still work" but API calls fail (no connection)
+- Hard refresh (`Ctrl+Shift+R`) or fresh incognito reveals reality
+
+---
+
+## Production-Grade Decisions
+
+1. **Multi-stage Docker builds** (frontend) — production-ready images, no Node runtime in production
+2. **Relative API paths** (`/api`) — environment-portable code
+3. **nginx as reverse proxy** — production pattern, not `npm start` dev server
+4. **ClusterIP for all services** — only Ingress is exposed
+5. **Single Ingress with path routing** — one entry point, not multiple LoadBalancers
+6. **Same image works across all environments** — Minikube → EKS with no changes
+7. **Secrets separated from ConfigMap** — security boundary
+8. **`.dockerignore`** — secrets never leak into images
+9. **`.gitignore` for `secret.yaml`** — secrets never in version control
+
+---
+
+## Key Commands
+
+```bash
+# Cluster management
+minikube start / stop / status / ip
+minikube tunnel
+minikube addons enable ingress
+
+# Apply and inspect
+kubectl apply -f <file>.yaml
+kubectl apply -f .                       # whole folder
+kubectl get all -n fcms
+kubectl get pods -n fcms -w              # watch mode
+kubectl describe pod <name> -n fcms
+kubectl logs <pod-name> -n fcms
+
+# Templates
+kubectl create deployment X --image=Y --dry-run=client -o yaml
+kubectl create service clusterip X --tcp=PORT:PORT --dry-run=client -o yaml
+
+# Debug
+kubectl exec -it <pod> -n fcms -- sh
+
+# Cleanup
+kubectl delete deployment <name> -n fcms
+kubectl delete -f <file>.yaml
+```
+
+---
+
+## What Sets This Approach Apart
+
+This isn't a copy-paste from a tutorial. The approach was:
+- Refactor the code first to be portable
+- Write every manifest manually (with reviews)
+- Debug real issues (image pulls, env vars, naming, ports)
+- Understand every line of every file
+- Connect K8s concepts to prior Docker knowledge
+- Make production-grade decisions that can be defended
+
+---
+
+## Interview-Ready Talking Points
+
+When asked "tell me about your K8s deployment":
+
+> "FCMS is a 3-tier React/Express/MySQL stack deployed on Kubernetes. The frontend was refactored first — API calls were switched to relative paths and nginx was added as a reverse proxy with multi-stage Docker builds. This made the same image work in local dev, Docker Compose, Minikube, and EKS without changes.
+>
+> For K8s, 11 manifests were written: a Namespace for isolation, ConfigMap and Secret for environment config, a PVC for MySQL persistent storage, three Deployments (with `Recreate` strategy for MySQL since you can't roll updates with shared volumes), three ClusterIP Services, and a single Ingress for path-based routing. The frontend nginx proxies `/api` to the backend Service, and the backend connects to MySQL via the Service DNS name `fcms-db`.
+>
+> Ingress was chosen over multiple LoadBalancers because it's cost-efficient (one ALB in EKS instead of three), keeps backend services internal, and supports clean URL routing. `envFrom` injects all ConfigMap/Secret keys into the backend Pod, and `valueFrom` is used for MySQL since it expects specific env var names like `MYSQL_ROOT_PASSWORD`.
+>
+> The whole setup is portable — same manifests work for Minikube and EKS with only the IngressClass and Ingress annotations differing."
+
+That's a senior-level answer.

@@ -1,0 +1,7 @@
+Prerequisites:
+1. Create frontend and backend image
+
+Steps:
+1. Wtite a docker-compose.yml file with all the steps required. Use a separate internal network
+2. Run 'docker compose up'. This creates network and the container
+3. Optional: Add seeding data by going in the backend container 'docker compose exec fcms-backend node seed/seed_mysql.js'. Then restart the backend container: 'docker compose restart fcms-backend'
