@@ -30,3 +30,12 @@ kubectl delete -f filename.yaml
 kubectl exec -it deployment/fcms-frontend -n fcms -- sh
 kubectl get endpoints fcms-backend -n fcms -w
 kubectl get pods -n fcms -w -o wide
+
+#Compare IPs
+kubectl get services -n fcms
+
+kubectl get pod -n fcms -w -o wide
+
+kubectl exec -n kube-system kube-proxy-cb6h9 -- iptables-save 2>/dev/null | grep 10.107.207.70
+
+kubectl exec -n kube-system kube-proxy-cb6h9 -- iptables-save 2>/dev/null | grep KUBE-SVC-66Z7FDWWBU27XXNT
