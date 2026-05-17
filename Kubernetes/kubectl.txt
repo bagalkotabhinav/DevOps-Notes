@@ -30,7 +30,6 @@ kubectl delete -f filename.yaml
 kubectl exec -it deployment/fcms-frontend -n fcms -- sh
 kubectl get endpoints fcms-backend -n fcms -w
 kubectl get pods -n fcms -w -o wide
-<<<<<<< Updated upstream
 
 #Compare IPs
 kubectl get services -n fcms
@@ -44,4 +43,4 @@ kubectl exec -n kube-system kube-proxy-cb6h9 -- iptables-save 2>/dev/null | grep
 kubectl get endpoints fcms-backend -n fcms
 kubectl get pods -n fcms -l app=fcms-backend
 
->>>>>>> Stashed changes
+
